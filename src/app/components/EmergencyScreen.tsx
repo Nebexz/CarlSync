@@ -90,7 +90,7 @@ export function EmergencyScreen() {
   };
 
   const contactsToRender = [primaryContact];
-  
+
   // Fallbacks if primary contact isn't the static ones
   if (primaryContact.name !== 'Michael Chen') {
     contactsToRender.push({ name: 'Michael Chen', rel: 'Son', phone: '+1 (555) 887-3421', initials: 'MC', color: '#6366f1' });
@@ -110,11 +110,11 @@ export function EmergencyScreen() {
       });
 
       // A4 dimensions: 210mm x 297mm
-      
+
       // Top red banner
       doc.setFillColor(239, 68, 68); // Red
       doc.rect(10, 10, 190, 15, 'F');
-      
+
       doc.setTextColor(255, 255, 255);
       doc.setFont('helvetica', 'bold');
       doc.setFontSize(13);
@@ -145,12 +145,12 @@ export function EmergencyScreen() {
       doc.setFillColor(254, 242, 242); // light red
       doc.setDrawColor(239, 68, 68); // red border
       doc.rect(135, 30, 60, 24, 'FD');
-      
+
       doc.setFont('helvetica', 'bold');
       doc.setFontSize(8);
       doc.setTextColor(239, 68, 68);
       doc.text('BLOOD TYPE', 140, 36);
-      
+
       doc.setFontSize(24);
       doc.text(patient.blood_type || '—', 140, 48);
 
@@ -179,7 +179,7 @@ export function EmergencyScreen() {
       if (patient.conditions && patient.conditions.length > 0) {
         patient.conditions.forEach((c: string) => {
           const lines = doc.splitTextToSize(`• ${c}`, 80);
-          lines.forEach(l => {
+          lines.forEach((l: string) => {
             doc.text(l, 15, yCol1);
             yCol1 += 5;
           });
@@ -198,7 +198,7 @@ export function EmergencyScreen() {
       if (patient.allergies && patient.allergies.length > 0) {
         patient.allergies.forEach((a: string) => {
           const lines = doc.splitTextToSize(`• ${a}`, 80);
-          lines.forEach(l => {
+          lines.forEach((l: string) => {
             doc.text(l, 15, yCol1);
             yCol1 += 5;
           });
@@ -218,7 +218,7 @@ export function EmergencyScreen() {
         activeMeds.forEach((m: any) => {
           const label = `${m.name}${m.dosage ? ` (${m.dosage})` : ''}`;
           const lines = doc.splitTextToSize(`• ${label}`, 80);
-          lines.forEach(l => {
+          lines.forEach((l: string) => {
             doc.text(l, 110, yCol2);
             yCol2 += 5;
           });
@@ -234,29 +234,29 @@ export function EmergencyScreen() {
       doc.line(10, yContacts - 5, 200, yContacts - 5);
 
       yContacts = drawSectionTitle('EMERGENCY CONTACTS', [15, 23, 42], 15, yContacts);
-      
+
       let xContact = 15;
       contactsToRender.forEach((c) => {
         doc.setFont('helvetica', 'bold');
         doc.setFontSize(10);
         doc.setTextColor(15, 23, 42);
         doc.text(c.name, xContact, yContacts);
-        
+
         doc.setFont('helvetica', 'normal');
         doc.setFontSize(9);
         doc.setTextColor(100, 116, 139);
         doc.text(c.rel, xContact, yContacts + 4.5);
-        
+
         doc.setTextColor(239, 68, 68);
         doc.setFont('helvetica', 'bold');
         doc.setFontSize(9.5);
         doc.text(c.phone, xContact, yContacts + 9);
-        
+
         xContact += 62;
       });
 
       yContacts += 16;
-      
+
       // Footer info box
       doc.setDrawColor(226, 232, 240);
       doc.line(10, yContacts, 200, yContacts);
