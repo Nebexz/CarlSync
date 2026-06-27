@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { Heart, ChevronRight, AlertCircle, RefreshCw, Loader2 } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { api } from '../../lib/api';
+import { supabase } from '../../lib/supabase';
 import type { Patient } from '../../contexts/AuthContext';
 import { toast } from 'sonner';
 
@@ -42,22 +43,8 @@ function ToggleChip({ label, selected, onToggle }: { label: string; selected: bo
   );
 }
 
-function useServerReady() {
-  const [ready, setReady] = useState<boolean | null>(null);
-  const check = () => {
-    fetch(`https://atnotdmrkjacqrbjpkbn.supabase.co/functions/v1/make-server-00f33061/health`, {
-      headers: { Authorization: `Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImF0bm90ZG1ya2phY3FyYmpwa2JuIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE3MTA5ODUsImV4cCI6MjA5NzI4Njk4NX0.twIMJNiyMy1QI6ZfbqiPK-6kBvWN6y4MkNV2-jQ2hVs` },
-    })
-      .then(r => setReady(r.ok))
-      .catch(() => setReady(false));
-  };
-  useEffect(() => { check(); }, []);
-  return { ready, recheck: check };
-}
-
 export function CreatePatientScreen() {
   const { user, setPatient } = useAuth();
-  const { ready, recheck } = useServerReady();
   const [step, setStep] = useState(1);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -101,27 +88,92 @@ export function CreatePatientScreen() {
   const handleJoinCircle = async () => {
     setError('');
     const code = inviteCode.trim();
-    if (!code) {
+    if (!code || !user) {
       setError('Invite code is required');
       return;
     }
     setJoining(true);
     try {
-      let resolvedPatient;
+      let targetPatientId = '';
+      
+      // 1. Resolve code to patientId
       if (code.length === 6) {
-        const res = await api.joinCareCircle(code.toUpperCase());
-        resolvedPatient = res.patient;
-      } else {
-        let decodedId;
-        try {
-          decodedId = atob(code);
-        } catch {
-          throw new Error('Invalid invite code format. Make sure it is either 6 characters or a valid legacy code.');
+        // Query the kv_store table directly using client-side supabase client
+        const { data, error: queryErr } = await supabase
+          .from("kv_store_00f33061")
+          .select("value")
+          .eq("key", `invite:code:${code.toUpperCase()}`)
+          .maybeSingle();
+          
+        if (queryErr) throw queryErr;
+        if (!data?.value?.patient_id) {
+          throw new Error('Invalid or expired 6-digit invite code.');
         }
-        if (!decodedId) throw new Error('Invalid invite code.');
-        const res = await api.joinCareCircle(undefined, decodedId);
-        resolvedPatient = res.patient;
+        targetPatientId = data.value.patient_id;
+      } else {
+        // Legacy Base64 code
+        try {
+          targetPatientId = atob(code);
+        } catch {
+          throw new Error('Invalid invite code format. Make sure it is either a 6-character code or a valid legacy code.');
+        }
       }
+
+      if (!targetPatientId) {
+        throw new Error('Could not resolve patient ID.');
+      }
+
+      // 2. Fetch the patient profile to verify it exists
+      const { data: patientData, error: patientErr } = await supabase
+        .from("kv_store_00f33061")
+        .select("value")
+        .eq("key", `patient:${targetPatientId}`)
+        .maybeSingle();
+
+      if (patientErr) throw patientErr;
+      if (!patientData?.value) {
+        throw new Error('Patient profile not found. The invite code might be invalid.');
+      }
+      
+      const resolvedPatient = patientData.value;
+
+      // 3. Link patient to current user: update the user's patients list
+      const patientsKey = `patients:user:${user.id}`;
+      const { data: userPatientsData, error: userPatientsErr } = await supabase
+        .from("kv_store_00f33061")
+        .select("value")
+        .eq("key", patientsKey)
+        .maybeSingle();
+        
+      if (userPatientsErr) throw userPatientsErr;
+      
+      let ids: string[] = userPatientsData?.value ?? [];
+      if (!ids.includes(targetPatientId)) {
+        ids.push(targetPatientId);
+        
+        // Save back to database KV store
+        const { error: upsertErr } = await supabase
+          .from("kv_store_00f33061")
+          .upsert({
+            key: patientsKey,
+            value: ids
+          });
+          
+        if (upsertErr) throw upsertErr;
+
+        // Post a timeline event via standard API (since api.addTimelineEvent is working backend route)
+        try {
+          await api.addTimelineEvent(
+            targetPatientId, 
+            "note", 
+            `${user.user_metadata?.name ?? "Family member"} joined the care circle`
+          );
+        } catch (timelineErr) {
+          console.error("Failed to post join event on timeline:", timelineErr);
+        }
+      }
+
+      // 4. Update the AuthContext state so the dashboard loads
       setPatient(resolvedPatient as Patient);
       toast.success(`Successfully joined care circle for ${resolvedPatient.name}!`);
     } catch (e: any) {
@@ -154,33 +206,6 @@ export function CreatePatientScreen() {
         </div>
 
         <div className="px-8 py-8">
-          {/* Deploy banner */}
-          {ready === false && (
-            <div className="flex items-start gap-3 p-4 rounded-xl mb-6 border border-amber-500/20 bg-amber-500/10 text-amber-800 dark:text-amber-300 font-sans">
-              <AlertCircle size={18} className="text-amber-500 flex-shrink-0 mt-0.5" />
-              <div className="flex-1">
-                <p className="font-sans font-bold text-sm text-amber-900 dark:text-amber-400">
-                  One more step: deploy the server
-                </p>
-                <p className="font-sans text-xs text-amber-700 dark:text-amber-500 mt-1 leading-relaxed">
-                  Go to the <strong>Make settings page → Deploy Edge Function</strong>, then come back and hit Retry. This only takes a few seconds.
-                </p>
-              </div>
-              <button onClick={recheck}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold flex-shrink-0 bg-amber-500 text-white hover:opacity-90 transition-opacity">
-                <RefreshCw size={12} /> Retry
-              </button>
-            </div>
-          )}
-          {ready === true && (
-            <div className="flex items-center gap-2 p-3 rounded-xl mb-6 border border-emerald-500/20 bg-emerald-500/10 text-emerald-800 dark:text-emerald-300">
-              <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-              <p className="font-sans text-xs font-semibold text-emerald-600 dark:text-emerald-400">
-                Server connected — you're good to go!
-              </p>
-            </div>
-          )}
-
           {/* Mode Selector Tabs */}
           <div className="flex border-b border-border mb-6">
             <button
@@ -230,7 +255,7 @@ export function CreatePatientScreen() {
               )}
               <button
                 onClick={handleJoinCircle}
-                disabled={joining || !inviteCode.trim() || ready !== true}
+                disabled={joining || !inviteCode.trim()}
                 className="w-full py-3.5 rounded-xl text-sm font-semibold text-white bg-emerald-600 hover:opacity-90 disabled:opacity-60 transition-opacity font-sans flex items-center justify-center gap-2 cursor-pointer disabled:cursor-not-allowed"
               >
                 {joining && <Loader2 size={16} className="animate-spin" />}
@@ -372,7 +397,7 @@ export function CreatePatientScreen() {
                     Continue <ChevronRight size={16} />
                   </button>
                 ) : (
-                  <button onClick={handleFinish} disabled={loading || !form.emergency_contact_name || !form.emergency_contact_phone || ready !== true}
+                  <button onClick={handleFinish} disabled={loading || !form.emergency_contact_name || !form.emergency_contact_phone}
                     className="flex-1 py-3 rounded-xl text-sm font-semibold text-white bg-emerald-600 hover:opacity-90 disabled:opacity-60 transition-opacity font-sans"
                   >
                     {loading ? 'Creating profile…' : 'Get Started →'}

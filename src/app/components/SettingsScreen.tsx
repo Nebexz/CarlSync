@@ -182,26 +182,43 @@ function ChangePasswordModal({ onClose }: { onClose: () => void }) {
     </div>
   );
 }
-
 // ── Invite Modal ──────────────────────────────────────────────────────────────
 function InviteModal({ patientId, patientName, onClose }: { patientId: string; patientName: string; onClose: () => void }) {
   const [copied, setCopied] = useState(false);
   const [loadingCode, setLoadingCode] = useState(true);
-  const [inviteCode, setInviteCode] = useState(() => btoa(patientId).replace(/=/g, ''));
+  const [inviteCode, setInviteCode] = useState('');
 
   useEffect(() => {
-    api.createInvite(patientId)
-      .then(res => {
-        if (res.code) {
-          setInviteCode(res.code);
+    const generateSecureCode = async () => {
+      try {
+        // Generate a random 6-character alphanumeric code (A-Z, 0-9)
+        const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+        let code = "";
+        for (let i = 0; i < 6; i++) {
+          code += chars.charAt(Math.floor(Math.random() * chars.length));
         }
-      })
-      .catch(err => {
+
+        // Upsert to kv_store table directly from client side
+        const { error } = await supabase.from("kv_store_00f33061").upsert({
+          key: `invite:code:${code}`,
+          value: {
+            patient_id: patientId,
+            created_at: new Date().toISOString()
+          }
+        });
+
+        if (error) throw error;
+        setInviteCode(code);
+      } catch (err) {
         console.error('Failed to generate secure code, using fallback:', err);
-      })
-      .finally(() => {
+        // Fallback to legacy base64 format on failure
+        setInviteCode(btoa(patientId).replace(/=/g, ''));
+      } finally {
         setLoadingCode(false);
-      });
+      }
+    };
+
+    generateSecureCode();
   }, [patientId]);
 
   const inviteMsg = `Hi! I'm using CareSync to coordinate care for ${patientName}. Join our care circle with this code: ${inviteCode}`;
@@ -215,48 +232,58 @@ function InviteModal({ patientId, patientName, onClose }: { patientId: string; p
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
-      <div className="bg-card text-card-foreground rounded-2xl p-7 shadow-2xl border border-border w-[480px]">
-        <div className="flex items-center justify-between mb-5">
-          <h3 className="font-outfit font-bold text-xl text-foreground">Invite Family Member</h3>
-          <button onClick={onClose} className="p-1 hover:bg-muted rounded text-muted-foreground"><X size={18} /></button>
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+      <div className="bg-card text-card-foreground rounded-2xl p-6 shadow-2xl border border-border w-full max-w-[460px] animate-in fade-in zoom-in-95 duration-200">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="font-outfit font-bold text-lg text-foreground">Invite Family Member</h3>
+          <button onClick={onClose} className="p-1.5 hover:bg-muted rounded-lg text-muted-foreground transition-colors cursor-pointer"><X size={16} /></button>
         </div>
 
-        <div className="p-4 rounded-xl mb-5 bg-teal-50 dark:bg-teal-950/20 border border-teal-200 dark:border-teal-900/50">
-          <p className="font-sans text-sm text-teal-600 dark:text-teal-400 leading-relaxed">
-            Share the invite code below with a family member. They'll create a CareSync account and enter this code to join the care circle for <strong>{patientName}</strong>.
+        <div className="p-4 rounded-xl mb-5 bg-teal-500/10 dark:bg-teal-950/20 border border-teal-500/20 dark:border-teal-900/50">
+          <p className="font-sans text-xs text-teal-700 dark:text-teal-400 leading-relaxed">
+            Share this 6-character code with a family member. They can join the care circle for <strong>{patientName}</strong> on their onboarding screen.
           </p>
         </div>
 
-        <div>
-          <p className="text-xs font-bold mb-2 text-muted-foreground">INVITE CODE</p>
-          <div className="flex items-center gap-2 p-3 rounded-xl border border-border bg-background">
-            <span className="flex-1 font-mono text-sm font-semibold tracking-wider text-foreground">
-              {loadingCode ? 'Generating...' : inviteCode}
+        <div className="mb-5">
+          <p className="text-[10px] font-bold mb-2 tracking-wider text-muted-foreground uppercase">Invite Code</p>
+          <div className="flex items-center gap-3 p-3 rounded-xl border border-border bg-muted/20">
+            <span className="flex-1 font-mono text-lg font-bold tracking-widest text-center text-foreground">
+              {loadingCode ? 'GENERATING...' : inviteCode}
             </span>
-            <button onClick={() => copy(inviteCode, 'Code')}
+            <button
+              onClick={() => copy(inviteCode, 'Code')}
               disabled={loadingCode}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors text-white cursor-pointer disabled:cursor-not-allowed ${
+              className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold transition-colors text-white cursor-pointer disabled:cursor-not-allowed ${
                 copied ? 'bg-emerald-500 hover:bg-emerald-600' : 'bg-teal-600 hover:bg-teal-700'
-              }`}>
+              }`}
+            >
               {copied ? <Check size={13} /> : <Copy size={13} />}
-              {copied ? 'Copied!' : 'Copy'}
+              {copied ? 'Copied' : 'Copy'}
             </button>
           </div>
         </div>
 
-        <div className="mt-4">
-          <p className="text-xs font-bold mb-2 text-muted-foreground">SHARE MESSAGE</p>
-          <textarea readOnly value={inviteMsg} rows={3}
-            className="w-full px-3 py-2.5 rounded-lg border border-border bg-background text-muted-foreground text-sm resize-none font-sans" />
-          <button onClick={() => copy(inviteMsg, 'Message')}
-            className="mt-2 w-full flex items-center justify-center gap-2 py-2.5 rounded-xl border border-border text-sm font-semibold text-muted-foreground hover:bg-muted bg-card transition-colors">
-            <Copy size={14} /> Copy Full Message
+        <div className="mb-5">
+          <p className="text-[10px] font-bold mb-2 tracking-wider text-muted-foreground uppercase">Share Message</p>
+          <div className="w-full px-3.5 py-3 rounded-xl border border-border bg-background text-muted-foreground text-xs leading-relaxed font-sans select-all min-h-[72px] flex items-center">
+            {inviteMsg}
+          </div>
+          <button
+            onClick={() => copy(inviteMsg, 'Message')}
+            disabled={loadingCode}
+            className="mt-2 w-full flex items-center justify-center gap-2 py-2 rounded-lg border border-border text-xs font-semibold text-muted-foreground hover:bg-muted bg-card transition-colors cursor-pointer"
+          >
+            <Copy size={13} /> Copy Full Message
           </button>
         </div>
 
-        <button onClick={onClose} className="mt-4 w-full py-2.5 rounded-xl text-sm font-semibold text-white bg-teal-600 hover:opacity-90 transition-opacity cursor-pointer"
-          >Done</button>
+        <button
+          onClick={onClose}
+          className="w-full py-2.5 rounded-xl text-sm font-semibold text-white bg-teal-600 hover:bg-teal-700 transition-colors cursor-pointer"
+        >
+          Done
+        </button>
       </div>
     </div>
   );
