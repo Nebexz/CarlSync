@@ -18,7 +18,7 @@ if (-not $supabaseCheck) {
     }
     Write-Host "Supabase CLI installed successfully!" -ForegroundColor Green
 } else {
-    Write-Host "✓ Supabase CLI detected." -ForegroundColor Green
+    Write-Host "[OK] Supabase CLI detected." -ForegroundColor Green
 }
 
 Write-Host ""
