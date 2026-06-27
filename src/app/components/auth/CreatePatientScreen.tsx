@@ -109,7 +109,7 @@ export function CreatePatientScreen() {
     try {
       let resolvedPatient;
       if (code.length === 6) {
-        const res = await api.joinCareCircle(code);
+        const res = await api.joinCareCircle(code.toUpperCase());
         resolvedPatient = res.patient;
       } else {
         let decodedId;
@@ -217,7 +217,7 @@ export function CreatePatientScreen() {
                 <p className="text-xs font-bold mb-1.5 text-muted-foreground">Invite Code</p>
                 <input
                   value={inviteCode}
-                  onChange={e => setInviteCode(e.target.value.toUpperCase())}
+                  onChange={e => setInviteCode(e.target.value)}
                   placeholder="Enter 6-character code (e.g. H3K9XP) or legacy code"
                   className="w-full px-4 py-3 rounded-xl border border-border bg-card text-foreground text-sm outline-none font-mono tracking-widest text-center focus:border-teal-500 focus:ring-2 focus:ring-teal-500/20 transition-all font-sans"
                 />
