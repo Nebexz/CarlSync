@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Heart, ChevronRight, AlertCircle, RefreshCw, Loader2 } from 'lucide-react';
+import { Heart, ChevronRight, AlertCircle, RefreshCw, Loader2, X } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { api } from '../../lib/api';
 import { supabase } from '../../lib/supabase';
@@ -44,7 +44,7 @@ function ToggleChip({ label, selected, onToggle }: { label: string; selected: bo
 }
 
 export function CreatePatientScreen() {
-  const { user, setPatient } = useAuth();
+  const { user, setPatient, patients } = useAuth();
   const [step, setStep] = useState(1);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -190,7 +190,16 @@ export function CreatePatientScreen() {
       <div className="w-full bg-card text-card-foreground rounded-3xl shadow-xl overflow-hidden border border-border max-w-[600px]">
 
         {/* Header */}
-        <div className="px-8 pt-8 pb-6 border-b border-border bg-gradient-to-br from-emerald-500/10 to-teal-500/10 dark:from-emerald-950/30 dark:to-teal-950/30">
+        <div className="px-8 pt-8 pb-6 border-b border-border bg-gradient-to-br from-emerald-500/10 to-teal-500/10 dark:from-emerald-950/30 dark:to-teal-950/30 relative">
+          {patients && patients.length > 0 && (
+            <button
+              onClick={() => setPatient(patients[0])}
+              className="absolute top-6 right-6 p-2 rounded-lg hover:bg-muted text-muted-foreground transition-colors cursor-pointer"
+              title="Cancel and return to dashboard"
+            >
+              <X size={18} />
+            </button>
+          )}
           <div className="flex items-center gap-3 mb-4">
             <div className="flex items-center justify-center rounded-xl bg-emerald-500 w-10 h-10">
               <Heart size={20} className="text-white fill-white" />
