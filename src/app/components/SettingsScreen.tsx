@@ -186,7 +186,24 @@ function ChangePasswordModal({ onClose }: { onClose: () => void }) {
 // ── Invite Modal ──────────────────────────────────────────────────────────────
 function InviteModal({ patientId, patientName, onClose }: { patientId: string; patientName: string; onClose: () => void }) {
   const [copied, setCopied] = useState(false);
-  const inviteCode = btoa(patientId).replace(/=/g, '');
+  const [loadingCode, setLoadingCode] = useState(true);
+  const [inviteCode, setInviteCode] = useState(() => btoa(patientId).replace(/=/g, ''));
+
+  useEffect(() => {
+    api.createInvite(patientId)
+      .then(res => {
+        if (res.code) {
+          setInviteCode(res.code);
+        }
+      })
+      .catch(err => {
+        console.error('Failed to generate secure code, using fallback:', err);
+      })
+      .finally(() => {
+        setLoadingCode(false);
+      });
+  }, [patientId]);
+
   const inviteMsg = `Hi! I'm using CareSync to coordinate care for ${patientName}. Join our care circle with this code: ${inviteCode}`;
 
   const copy = (text: string, label: string) => {
@@ -215,10 +232,11 @@ function InviteModal({ patientId, patientName, onClose }: { patientId: string; p
           <p className="text-xs font-bold mb-2 text-muted-foreground">INVITE CODE</p>
           <div className="flex items-center gap-2 p-3 rounded-xl border border-border bg-background">
             <span className="flex-1 font-mono text-sm font-semibold tracking-wider text-foreground">
-              {inviteCode}
+              {loadingCode ? 'Generating...' : inviteCode}
             </span>
             <button onClick={() => copy(inviteCode, 'Code')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors text-white ${
+              disabled={loadingCode}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors text-white cursor-pointer disabled:cursor-not-allowed ${
                 copied ? 'bg-emerald-500 hover:bg-emerald-600' : 'bg-teal-600 hover:bg-teal-700'
               }`}>
               {copied ? <Check size={13} /> : <Copy size={13} />}
@@ -237,7 +255,7 @@ function InviteModal({ patientId, patientName, onClose }: { patientId: string; p
           </button>
         </div>
 
-        <button onClick={onClose} className="mt-4 w-full py-2.5 rounded-xl text-sm font-semibold text-white bg-teal-600 hover:opacity-90 transition-opacity"
+        <button onClick={onClose} className="mt-4 w-full py-2.5 rounded-xl text-sm font-semibold text-white bg-teal-600 hover:opacity-90 transition-opacity cursor-pointer"
           >Done</button>
       </div>
     </div>

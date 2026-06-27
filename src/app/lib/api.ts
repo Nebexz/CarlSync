@@ -74,4 +74,10 @@ export const api = {
 
   // Account
   deleteAccount: () => req('DELETE', '/user'),
+
+  // Invites
+  createInvite: (patientId: string) =>
+    req<{ code: string }>('POST', '/invite', { patient_id: patientId }),
+  joinCareCircle: (code?: string, patientId?: string) =>
+    req<{ patient: any }>('POST', '/invite/join', { code, patient_id: patientId }),
 };

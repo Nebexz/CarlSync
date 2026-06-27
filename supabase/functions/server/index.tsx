@@ -248,6 +248,78 @@ app.post(`${P}/timeline`, async (c) => {
   }
 });
 
+// ── Invites ───────────────────────────────────────────────────────────────────
+app.post(`${P}/invite`, async (c) => {
+  const user = await getUser(c);
+  if (!user) return c.json({ error: "Unauthorized" }, 401);
+  try {
+    const { patient_id } = await c.req.json();
+    
+    // Generate a random 6-character code (A-Z, 0-9)
+    const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+    let code = "";
+    for (let i = 0; i < 6; i++) {
+      code += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    
+    // Store in KV
+    await kv.set(`invite:code:${code}`, {
+      patient_id,
+      created_by: user.id,
+      created_at: now()
+    });
+    
+    return c.json({ code });
+  } catch (e) {
+    return c.json({ error: `Create invite error: ${e}` }, 500);
+  }
+});
+
+app.post(`${P}/invite/join`, async (c) => {
+  const user = await getUser(c);
+  if (!user) return c.json({ error: "Unauthorized" }, 401);
+  try {
+    const { code, patient_id: directPatientId } = await c.req.json();
+    let targetPatientId = directPatientId;
+    
+    if (code) {
+      // Lookup invite code
+      const invite = await kv.get(`invite:code:${code.toUpperCase()}`);
+      if (!invite) return c.json({ error: "Invalid or expired invite code" }, 400);
+      targetPatientId = invite.patient_id;
+    }
+    
+    if (!targetPatientId) {
+      return c.json({ error: "Invalid request" }, 400);
+    }
+    
+    // Fetch patient to verify it exists
+    const patient = await kv.get(`patient:${targetPatientId}`);
+    if (!patient) return c.json({ error: "Patient not found" }, 404);
+    
+    // Add to user's patient list if not already there
+    const ids: string[] = (await kv.get(`patients:user:${user.id}`)) ?? [];
+    if (!ids.includes(targetPatientId)) {
+      ids.push(targetPatientId);
+      await kv.set(`patients:user:${user.id}`, ids);
+      
+      // Create a timeline event
+      await addTimeline(
+        targetPatientId, 
+        "note", 
+        `${user.user_metadata?.name ?? "Family member"} joined the care circle`, 
+        user.id, 
+        user.user_metadata?.name ?? "Caregiver"
+      );
+    }
+    
+    return c.json({ patient });
+  } catch (e) {
+    return c.json({ error: `Join care circle error: ${e}` }, 500);
+  }
+});
+
+
 // ── Appointments ──────────────────────────────────────────────────────────────
 app.get(`${P}/patients/:id/appointments`, async (c) => {
   const user = await getUser(c);
