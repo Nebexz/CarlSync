@@ -42,13 +42,14 @@ function colorForActor(name: string): string {
 }
 
 export function TimelineScreen() {
-  const { patient, user } = useAuth();
+  const { patient, user, setPatient, refreshPatient } = useAuth();
   const [events, setEvents] = useState<TEvent[]>([]);
   const [loading, setLoading] = useState(true);
   const [note, setNote] = useState('');
   const [posting, setPosting] = useState(false);
   const [filterType, setFilterType] = useState<string>('all');
   const [realtimeLabel, setRealtimeLabel] = useState('');
+  const [commentTexts, setCommentTexts] = useState<Record<string, string>>({});
 
   const patientId = patient?.id ?? '';
   const userName = user?.user_metadata?.name ?? 'Caregiver';
@@ -66,6 +67,7 @@ export function TimelineScreen() {
     if (!patientId) return;
     return careChannel.subscribe(patientId, (payload) => {
       load();
+      refreshPatient().catch(() => {});
       const msg = payload.payload?.msg;
       if (msg) {
         setRealtimeLabel(msg);
@@ -74,6 +76,45 @@ export function TimelineScreen() {
       }
     });
   }, [patientId]);
+
+  const handleAddComment = async (eventId: string) => {
+    const text = commentTexts[eventId]?.trim();
+    if (!text || !patient) return;
+
+    const currentComments = patient.timeline_comments || {};
+    const eventComments = currentComments[eventId] || [];
+    
+    const newComment = {
+      id: Math.random().toString(36).substring(2, 9),
+      author: userName,
+      text,
+      created_at: new Date().toISOString()
+    };
+
+    const updatedComments = {
+      ...currentComments,
+      [eventId]: [...eventComments, newComment]
+    };
+
+    try {
+      // Optimistically update local context state
+      const updatedPatient = { ...patient, timeline_comments: updatedComments };
+      setPatient(updatedPatient);
+      
+      // Clear comment input field
+      setCommentTexts(prev => ({ ...prev, [eventId]: '' }));
+
+      // Save updated comments in the patient DB object
+      await api.updatePatient(patient.id, { timeline_comments: updatedComments });
+      
+      // Broadcast update to family members
+      careChannel.broadcast(patientId, { msg: `${userName.split(' ')[0]} added a comment` });
+      
+      toast.success('Comment added');
+    } catch (e: any) {
+      toast.error(e.message || 'Failed to add comment');
+    }
+  };
 
   const postNote = async () => {
     if (!note.trim()) return;
@@ -191,10 +232,59 @@ export function TimelineScreen() {
                             </span>
                           </div>
                           <p className="font-sans text-sm text-foreground leading-relaxed">{ev.description}</p>
-                          <div className="flex items-center gap-2 mt-3 pt-3 border-t border-border">
-                            <MessageSquare size={12} className="text-muted-foreground" />
-                            <span className="font-sans text-xs text-muted-foreground">Add a comment…</span>
-                          </div>
+                          {/* Comments section */}
+                          {(() => {
+                            const comments = patient?.timeline_comments?.[ev.id] || [];
+                            return (
+                              <div className="mt-3 pt-3 border-t border-border">
+                                {comments.length > 0 && (
+                                  <div className="flex flex-col gap-3.5 mb-4">
+                                    {comments.map((c: any) => {
+                                      const cColor = colorForActor(c.author);
+                                      return (
+                                        <div key={c.id} className="flex gap-2.5 items-start">
+                                          <div className="flex items-center justify-center rounded-full flex-shrink-0 w-7 h-7 text-[10px] font-bold text-white shadow-sm"
+                                            style={{ backgroundColor: cColor }}>
+                                            {initials(c.author)}
+                                          </div>
+                                          <div className="flex-1 bg-muted/40 rounded-xl p-2.5 border border-border/40">
+                                            <div className="flex items-center justify-between gap-2 mb-1 flex-wrap">
+                                              <span className="font-sans font-semibold text-xs text-foreground">{c.author}</span>
+                                              <span className="font-sans text-[10px] text-muted-foreground">{relativeTime(c.created_at)}</span>
+                                            </div>
+                                            <p className="font-sans text-xs text-foreground leading-relaxed">{c.text}</p>
+                                          </div>
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                )}
+                                <div className="flex items-center gap-2">
+                                  <div className="flex-1 flex gap-2">
+                                    <input
+                                      type="text"
+                                      value={commentTexts[ev.id] || ''}
+                                      onChange={e => setCommentTexts(prev => ({ ...prev, [ev.id]: e.target.value }))}
+                                      onKeyDown={e => {
+                                        if (e.key === 'Enter') {
+                                          handleAddComment(ev.id);
+                                        }
+                                      }}
+                                      placeholder="Add a comment..."
+                                      className="flex-1 bg-muted/40 text-foreground text-xs px-3 py-2 rounded-lg border border-border outline-none focus:border-teal-500 focus:ring-1 focus:ring-teal-500 transition-colors font-sans"
+                                    />
+                                    <button
+                                      onClick={() => handleAddComment(ev.id)}
+                                      disabled={!commentTexts[ev.id]?.trim()}
+                                      className="flex items-center justify-center bg-teal-600 disabled:bg-muted text-white disabled:text-muted-foreground w-8 h-8 rounded-lg transition-colors flex-shrink-0 hover:bg-teal-700 cursor-pointer disabled:cursor-not-allowed"
+                                    >
+                                      <Send size={12} />
+                                    </button>
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          })()}
                         </div>
                       </div>
                     );

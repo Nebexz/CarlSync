@@ -18,7 +18,9 @@ export interface Patient {
   emergency_contact_rel: string;
   created_by: string;
   created_at: string;
+  timeline_comments?: Record<string, any[]>;
 }
+
 
 interface Ctx {
   user: User | null;
