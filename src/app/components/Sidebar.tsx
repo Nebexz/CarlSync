@@ -46,86 +46,22 @@ export function Sidebar({ activeScreen, onNavigate, theme, onToggleTheme, onClos
     }
     setJoining(true);
     try {
-      let targetPatientId = '';
-      
-      // 1. Resolve code to patientId
+      let resolvedPatient;
       if (code.length === 6) {
-        // Query the kv_store table directly using client-side supabase client
-        const { data, error: queryErr } = await supabase
-          .from("kv_store_00f33061")
-          .select("value")
-          .eq("key", `invite:code:${code.toUpperCase()}`)
-          .maybeSingle();
-          
-        if (queryErr) throw queryErr;
-        if (!data?.value?.patient_id) {
-          throw new Error('Invalid or expired 6-digit invite code.');
-        }
-        targetPatientId = data.value.patient_id;
+        const res = await api.joinCareCircle(code.toUpperCase());
+        resolvedPatient = res.patient;
       } else {
-        // Legacy Base64 code
+        let decodedId;
         try {
-          targetPatientId = atob(code);
+          decodedId = atob(code);
         } catch {
-          throw new Error('Invalid invite code format. Make sure it is either a 6-character code or a valid legacy code.');
+          throw new Error('Invalid invite code format.');
         }
-      }
-
-      if (!targetPatientId) {
-        throw new Error('Could not resolve patient ID.');
-      }
-
-      // 2. Fetch the patient profile to verify it exists
-      const { data: patientData, error: patientErr } = await supabase
-        .from("kv_store_00f33061")
-        .select("value")
-        .eq("key", `patient:${targetPatientId}`)
-        .maybeSingle();
-
-      if (patientErr) throw patientErr;
-      if (!patientData?.value) {
-        throw new Error('Patient profile not found. The invite code might be invalid.');
+        if (!decodedId) throw new Error('Invalid invite code.');
+        const res = await api.joinCareCircle(undefined, decodedId);
+        resolvedPatient = res.patient;
       }
       
-      const resolvedPatient = patientData.value;
-
-      // 3. Link patient to current user: update the user's patients list
-      const patientsKey = `patients:user:${user.id}`;
-      const { data: userPatientsData, error: userPatientsErr } = await supabase
-        .from("kv_store_00f33061")
-        .select("value")
-        .eq("key", patientsKey)
-        .maybeSingle();
-        
-      if (userPatientsErr) throw userPatientsErr;
-      
-      let ids: string[] = userPatientsData?.value ?? [];
-      if (!ids.includes(targetPatientId)) {
-        ids.push(targetPatientId);
-        
-        // Save back to database KV store
-        const { error: upsertErr } = await supabase
-          .from("kv_store_00f33061")
-          .upsert({
-            key: patientsKey,
-            value: ids
-          });
-          
-        if (upsertErr) throw upsertErr;
-
-        // Post a timeline event via standard API (since api.addTimelineEvent is working backend route)
-        try {
-          await api.addTimelineEvent(
-            targetPatientId, 
-            "note", 
-            `${user.user_metadata?.name ?? "Family member"} joined the care circle`
-          );
-        } catch (timelineErr) {
-          console.error("Failed to post join event on timeline:", timelineErr);
-        }
-      }
-
-      // 4. Update the AuthContext state so the dashboard loads
       setPatient(resolvedPatient as Patient);
       setJoinModalOpen(false);
       setInviteCode('');
