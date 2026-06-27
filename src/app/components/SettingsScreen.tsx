@@ -189,36 +189,20 @@ function InviteModal({ patientId, patientName, onClose }: { patientId: string; p
   const [inviteCode, setInviteCode] = useState('');
 
   useEffect(() => {
-    const generateSecureCode = async () => {
-      try {
-        // Generate a random 6-character alphanumeric code (A-Z, 0-9)
-        const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
-        let code = "";
-        for (let i = 0; i < 6; i++) {
-          code += chars.charAt(Math.floor(Math.random() * chars.length));
+    api.createInvite(patientId)
+      .then(res => {
+        if (res.code) {
+          setInviteCode(res.code);
         }
-
-        // Upsert to kv_store table directly from client side
-        const { error } = await supabase.from("kv_store_00f33061").upsert({
-          key: `invite:code:${code}`,
-          value: {
-            patient_id: patientId,
-            created_at: new Date().toISOString()
-          }
-        });
-
-        if (error) throw error;
-        setInviteCode(code);
-      } catch (err) {
+      })
+      .catch(err => {
         console.error('Failed to generate secure code, using fallback:', err);
         // Fallback to legacy base64 format on failure
         setInviteCode(btoa(patientId).replace(/=/g, ''));
-      } finally {
+      })
+      .finally(() => {
         setLoadingCode(false);
-      }
-    };
-
-    generateSecureCode();
+      });
   }, [patientId]);
 
   const inviteMsg = `Hi! I'm using CareSync to coordinate care for ${patientName}. Join our care circle with this code: ${inviteCode}`;
