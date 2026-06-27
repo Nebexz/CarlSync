@@ -7,20 +7,72 @@ import * as kv from "./kv_store.tsx";
 const app = new Hono();
 app.use("*", logger(console.log));
 app.use("/*", cors({
-  origin: "*",
+  origin: (origin) => {
+    // Allow localhost for dev, and .pages.dev / specific prod domains
+    if (!origin || origin.startsWith("http://localhost:") || origin.endsWith(".pages.dev") || origin.includes("caresync")) {
+      return origin || "http://localhost:5173";
+    }
+    return "https://carlsync.pages.dev"; // fallback
+  },
   allowHeaders: ["Content-Type", "Authorization"],
   allowMethods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
   exposeHeaders: ["Content-Length"],
   maxAge: 600,
 }));
 
+// ── Security Middleware ───────────────────────────────────────────────────────
+const rateLimitStore = new Map<string, { count: number, resetAt: number }>();
+
+function rateLimiter(limit: number, windowMs: number) {
+  return async (c: any, next: any) => {
+    const ip = c.req.header("cf-connecting-ip") || c.req.header("x-forwarded-for") || "unknown";
+    const key = `${ip}:${c.req.path}`;
+    const now = Date.now();
+    let record = rateLimitStore.get(key);
+    
+    // Clean up occasionally to prevent memory leaks in the map (simplistic approach)
+    if (Math.random() < 0.01) {
+      for (const [k, v] of rateLimitStore.entries()) {
+        if (v.resetAt < now) rateLimitStore.delete(k);
+      }
+    }
+    
+    if (!record || record.resetAt < now) {
+      record = { count: 1, resetAt: now + windowMs };
+      rateLimitStore.set(key, record);
+      return next();
+    }
+    
+    if (record.count >= limit) {
+      console.warn(`Rate limit exceeded for ${key}`);
+      return c.json({ error: "Too many requests. Please try again later." }, 429);
+    }
+    
+    record.count++;
+    return next();
+  };
+}
+
+// 100 requests per minute general limit
+app.use("*", rateLimiter(100, 60000));
+// 5 requests per minute for auth/invites
+app.use(`${P}/signup`, rateLimiter(5, 60000));
+app.use(`${P}/invite`, rateLimiter(5, 60000));
+app.use(`${P}/invite/join`, rateLimiter(5, 60000));
+
+function sanitize(str: any, maxLen = 1000): string | null {
+  if (typeof str !== 'string' || !str.trim() || str.length > maxLen) return null;
+  return str.trim();
+}
+
+
+const P = "/make-server-00f33061";
+const BUCKET = "make-00f33061-documents";
+
 const supabase = createClient(
   Deno.env.get("SUPABASE_URL")!,
   Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
 );
-
-const P = "/make-server-00f33061";
-const BUCKET = "make-00f33061-documents";
 
 // ── Storage bucket (idempotent) ───────────────────────────────────────────────
 (async () => {
@@ -56,16 +108,26 @@ app.get(`${P}/health`, c => c.json({ status: "ok" }));
 // ── Auth ──────────────────────────────────────────────────────────────────────
 app.post(`${P}/signup`, async (c) => {
   try {
-    const { name, email, password } = await c.req.json();
+    const body = await c.req.json();
+    const name = sanitize(body.name, 100);
+    const email = sanitize(body.email, 255);
+    const password = body.password; // let supabase validate password length
+    if (!name || !email || typeof password !== 'string' || password.length < 6) {
+      return c.json({ error: "Invalid input data" }, 400);
+    }
     const { data, error } = await supabase.auth.admin.createUser({
       email, password,
       user_metadata: { name },
       email_confirm: true,
     });
-    if (error) return c.json({ error: `Signup error: ${error.message}` }, 400);
+    if (error) {
+      console.error("Signup Supabase error:", error);
+      return c.json({ error: "Signup failed. Please try again." }, 400);
+    }
     return c.json({ user: data.user });
   } catch (e) {
-    return c.json({ error: `Signup error: ${e}` }, 500);
+    console.error("Signup error error:", e);
+    return c.json({ error: "Signup error failed. Please try again later." }, 500);
   }
 });
 
@@ -91,6 +153,9 @@ app.post(`${P}/patients`, async (c) => {
   if (!user) return c.json({ error: "Unauthorized" }, 401);
   try {
     const body = await c.req.json();
+    const name = sanitize(body.name, 100);
+    if (!name) return c.json({ error: "Invalid patient name" }, 400);
+    body.name = name; // use sanitized
     const id = uid();
     const patient = { id, ...body, created_by: user.id, created_at: now() };
     await kv.set(`patient:${id}`, patient);
@@ -102,7 +167,8 @@ app.post(`${P}/patients`, async (c) => {
     await addTimeline(id, "note", `Patient profile created for ${body.name}`, user.id, user.user_metadata?.name ?? "Caregiver");
     return c.json({ patient });
   } catch (e) {
-    return c.json({ error: `Create patient error: ${e}` }, 500);
+    console.error("Create patient error error:", e);
+    return c.json({ error: "Create patient error failed. Please try again later." }, 500);
   }
 });
 
@@ -132,6 +198,11 @@ app.post(`${P}/medications`, async (c) => {
   try {
     const body = await c.req.json();
     const { patient_id } = body;
+    const name = sanitize(body.name, 100);
+    const dosage = sanitize(body.dosage, 100);
+    if (!name || !patient_id) return c.json({ error: "Invalid medication data" }, 400);
+    body.name = name;
+    if (dosage) body.dosage = dosage;
     const med = { id: uid(), ...body, created_by: user.id, created_at: now() };
     const meds: any[] = (await kv.get(`medications:patient:${patient_id}`)) ?? [];
     meds.push(med);
@@ -139,7 +210,8 @@ app.post(`${P}/medications`, async (c) => {
     await addTimeline(patient_id, "medication", `${user.user_metadata?.name ?? "Caregiver"} added ${body.name} ${body.dosage}`, user.id, user.user_metadata?.name ?? "Caregiver");
     return c.json({ medication: med });
   } catch (e) {
-    return c.json({ error: `Create medication error: ${e}` }, 500);
+    console.error("Create medication error error:", e);
+    return c.json({ error: "Create medication error failed. Please try again later." }, 500);
   }
 });
 
@@ -164,7 +236,8 @@ app.patch(`${P}/medications/:id`, async (c) => {
     }
     return c.json({ medication: meds[idx] });
   } catch (e) {
-    return c.json({ error: `Update medication error: ${e}` }, 500);
+    console.error("Update medication error error:", e);
+    return c.json({ error: "Update medication error failed. Please try again later." }, 500);
   }
 });
 
@@ -193,6 +266,9 @@ app.post(`${P}/tasks`, async (c) => {
   try {
     const body = await c.req.json();
     const { patient_id } = body;
+    const title = sanitize(body.title, 200);
+    if (!title || !patient_id) return c.json({ error: "Invalid task data" }, 400);
+    body.title = title;
     const task = { id: uid(), ...body, created_by: user.id, created_at: now() };
     const tasks: any[] = (await kv.get(`tasks:patient:${patient_id}`)) ?? [];
     tasks.push(task);
@@ -200,7 +276,8 @@ app.post(`${P}/tasks`, async (c) => {
     await addTimeline(patient_id, "task", `${user.user_metadata?.name ?? "Caregiver"} created task "${body.title}"`, user.id, user.user_metadata?.name ?? "Caregiver");
     return c.json({ task });
   } catch (e) {
-    return c.json({ error: `Create task error: ${e}` }, 500);
+    console.error("Create task error error:", e);
+    return c.json({ error: "Create task error failed. Please try again later." }, 500);
   }
 });
 
@@ -224,7 +301,8 @@ app.patch(`${P}/tasks/:id`, async (c) => {
     }
     return c.json({ task: tasks[idx] });
   } catch (e) {
-    return c.json({ error: `Update task error: ${e}` }, 500);
+    console.error("Update task error error:", e);
+    return c.json({ error: "Update task error failed. Please try again later." }, 500);
   }
 });
 
@@ -244,7 +322,8 @@ app.post(`${P}/timeline`, async (c) => {
     const event = await addTimeline(patient_id, type, description, user.id, user.user_metadata?.name ?? "Caregiver");
     return c.json({ event });
   } catch (e) {
-    return c.json({ error: `Create timeline error: ${e}` }, 500);
+    console.error("Create timeline error error:", e);
+    return c.json({ error: "Create timeline error failed. Please try again later." }, 500);
   }
 });
 
@@ -254,6 +333,7 @@ app.post(`${P}/invite`, async (c) => {
   if (!user) return c.json({ error: "Unauthorized" }, 401);
   try {
     const { patient_id } = await c.req.json();
+    if (!sanitize(patient_id, 100)) return c.json({ error: "Invalid patient ID" }, 400);
     
     // Generate a random 6-character code (A-Z, 0-9)
     const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
@@ -271,7 +351,8 @@ app.post(`${P}/invite`, async (c) => {
     
     return c.json({ code });
   } catch (e) {
-    return c.json({ error: `Create invite error: ${e}` }, 500);
+    console.error("Create invite error error:", e);
+    return c.json({ error: "Create invite error failed. Please try again later." }, 500);
   }
 });
 
@@ -315,7 +396,8 @@ app.post(`${P}/invite/join`, async (c) => {
     
     return c.json({ patient });
   } catch (e) {
-    return c.json({ error: `Join care circle error: ${e}` }, 500);
+    console.error("Join care circle error error:", e);
+    return c.json({ error: "Join care circle error failed. Please try again later." }, 500);
   }
 });
 
@@ -341,7 +423,8 @@ app.post(`${P}/appointments`, async (c) => {
     await addTimeline(patient_id, "appointment", `${user.user_metadata?.name ?? "Caregiver"} scheduled "${body.title}"`, user.id, user.user_metadata?.name ?? "Caregiver");
     return c.json({ appointment: appt });
   } catch (e) {
-    return c.json({ error: `Create appointment error: ${e}` }, 500);
+    console.error("Create appointment error error:", e);
+    return c.json({ error: "Create appointment error failed. Please try again later." }, 500);
   }
 });
 
@@ -368,7 +451,8 @@ app.post(`${P}/documents/upload-url`, async (c) => {
     if (error) return c.json({ error: error.message }, 500);
     return c.json({ upload_url: data.signedUrl, path });
   } catch (e) {
-    return c.json({ error: `Upload URL error: ${e}` }, 500);
+    console.error("Upload URL error error:", e);
+    return c.json({ error: "Upload URL error failed. Please try again later." }, 500);
   }
 });
 
@@ -385,7 +469,8 @@ app.post(`${P}/documents`, async (c) => {
     await addTimeline(patient_id, "note", `${user.user_metadata?.name ?? "Caregiver"} uploaded "${body.title}"`, user.id, user.user_metadata?.name ?? "Caregiver");
     return c.json({ document: doc });
   } catch (e) {
-    return c.json({ error: `Create document error: ${e}` }, 500);
+    console.error("Create document error error:", e);
+    return c.json({ error: "Create document error failed. Please try again later." }, 500);
   }
 });
 
@@ -394,7 +479,11 @@ app.post(`${P}/wellbeing`, async (c) => {
   const user = await getUser(c);
   if (!user) return c.json({ error: "Unauthorized" }, 401);
   try {
-    const { mood, note, patient_id } = await c.req.json();
+    const body = await c.req.json();
+    const mood = sanitize(body.mood, 50);
+    const note = sanitize(body.note, 1000);
+    const patient_id = sanitize(body.patient_id, 100);
+    if (!mood) return c.json({ error: "Mood is required" }, 400);
     const entry = { id: uid(), mood, note, created_at: now() };
     const logs: any[] = (await kv.get(`wellbeing:user:${user.id}`)) ?? [];
     logs.unshift(entry);
@@ -404,7 +493,8 @@ app.post(`${P}/wellbeing`, async (c) => {
     }
     return c.json({ entry });
   } catch (e) {
-    return c.json({ error: `Wellbeing log error: ${e}` }, 500);
+    console.error("Wellbeing log error error:", e);
+    return c.json({ error: "Wellbeing log error failed. Please try again later." }, 500);
   }
 });
 
@@ -422,7 +512,8 @@ app.delete(`${P}/user`, async (c) => {
     await kv.del(`wellbeing:user:${user.id}`);
     return c.json({ success: true });
   } catch (e) {
-    return c.json({ error: `Delete account error: ${e}` }, 500);
+    console.error("Delete account error error:", e);
+    return c.json({ error: "Delete account error failed. Please try again later." }, 500);
   }
 });
 

@@ -11,6 +11,7 @@ export function AuthScreen() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [showPass, setShowPass] = useState(false);
+  const [showPrivacy, setShowPrivacy] = useState(false);
 
   const set = (k: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement>) =>
     setForm(p => ({ ...p, [k]: e.target.value }));
@@ -27,7 +28,17 @@ export function AuthScreen() {
         await signUp(form.name, form.email, form.password);
       }
     } catch (err: any) {
-      setError(err.message ?? 'Something went wrong. Please try again.');
+      const msg = err?.message || '';
+      console.error('Auth error detail:', err);
+      if (msg.includes('Invalid login credentials') || msg.includes('Email not confirmed') || msg.includes('user_not_found') || msg.includes('invalid_credentials')) {
+        setError('Invalid email or password.');
+      } else if (msg.includes('already registered') || msg.includes('User already exists')) {
+        setError('An account with this email already exists.');
+      } else if (msg.includes('Password should be')) {
+        setError('Password must be at least 8 characters long.');
+      } else {
+        setError('Authentication failed. Please check your credentials and try again.');
+      }
     } finally {
       setLoading(false);
     }
@@ -180,8 +191,48 @@ export function AuthScreen() {
           <p className="text-center mt-8 font-sans text-[11px] text-muted-foreground/60 leading-relaxed">
             CareSync is a care coordination tool. Do not store highly sensitive personal health information you would not share with family.
           </p>
+
+          <div className="text-center mt-4">
+            <button type="button" onClick={() => setShowPrivacy(true)}
+              className="text-xs text-muted-foreground/70 hover:text-emerald-500 hover:underline transition-colors font-sans">
+              Privacy Policy
+            </button>
+          </div>
         </div>
       </div>
+
+      {/* ── Privacy Policy Modal ── */}
+      {showPrivacy && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/50 backdrop-blur-xs">
+          <div className="relative bg-card text-foreground rounded-2xl max-w-lg w-full max-h-[80vh] overflow-hidden flex flex-col p-6 shadow-2xl border border-border">
+            <h2 className="font-outfit font-bold text-xl mb-4 text-emerald-500">Privacy Policy</h2>
+            
+            <div className="font-sans text-xs text-muted-foreground space-y-4 leading-relaxed overflow-y-auto pr-2 flex-1">
+              <p><strong>Last Updated: June 2026</strong></p>
+              <p>At CareSync, we believe in radical transparency. We are committed to protecting the privacy of your family's care circle data.</p>
+              
+              <h3 className="font-semibold text-foreground mt-2">1. Data Storage and Location</h3>
+              <p>Your user profile and patient care circle details are stored securely using Supabase database infrastructure. Data is encrypted at rest and in transit using SSL/TLS protocols.</p>
+
+              <h3 className="font-semibold text-foreground mt-2">2. What We Collect</h3>
+              <p>We only collect the data you explicitly provide: names, emails (for secure auth), care circle member listings, medications, and care log timeline events. We do not track location or read device storage.</p>
+
+              <h3 className="font-semibold text-foreground mt-2">3. Data Sharing & Security</h3>
+              <p><strong>We never sell, lease, or distribute your family's data to third parties.</strong> Access to a patient's care circle is strictly restricted via 6-character secure codes and Supabase Row Level Security (RLS) policies. Only users with the active invite code can join a circle.</p>
+
+              <h3 className="font-semibold text-foreground mt-2">4. Your Control</h3>
+              <p>You can leave a care circle or delete your account completely at any time from the settings screen. Deleting your account deletes all care logs associated with it.</p>
+            </div>
+            
+            <div className="mt-6 flex justify-end">
+              <button onClick={() => setShowPrivacy(false)}
+                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-sans text-sm font-semibold rounded-xl transition-colors">
+                Close Policy
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

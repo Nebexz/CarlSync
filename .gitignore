@@ -57,3 +57,7 @@ supabase/functions/.env
 # Antigravity IDE and internal folders
 .gemini/
 .antigravity/
+
+# Temporary reference files (never push to GitHub)
+*.pdf
+deploy-backend.ps1
